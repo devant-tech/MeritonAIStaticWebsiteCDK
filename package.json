@@ -1,8 +1,8 @@
 {
-    "name": "example_lambda_cdk",
+    "name": "meriton_ai_static_website_cdk",
     "version": "0.1.0",
     "bin": {
-        "example_lambda_cdk": "bin/example_lambda_cdk.js"
+        "meriton_ai_static_website_cdk": "bin/meriton_ai_static_website_cdk.js"
     },
     "scripts": {
         "clean": "rm -rf build dist cdk.out node_modules",

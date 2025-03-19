@@ -11,7 +11,7 @@ ExampleAWSCDK/
 ├── .husky/
 │   ├── pre-commit    // build, testing, prettier before commit
 ├── bin/
-│   ├── example_lambda_cdk.ts
+│   ├── meriton_ai_static_website_cdk.ts
 ├── lib/
 │   ├── configuration/
 │   │   ├── dependencies.ts   // project specific config

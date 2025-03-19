@@ -1,6 +1,13 @@
 import * as cdk from "aws-cdk-lib";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import {
+    Effect,
+    ManagedPolicy,
+    PolicyStatement,
+    Role,
+    ServicePrincipal
+} from "aws-cdk-lib/aws-iam";
+import {
+    CodeBuildStep,
     CodePipeline,
     CodePipelineSource,
     ManualApprovalStep,
@@ -13,10 +20,15 @@ import {
     GITHUB_OWNER,
     GITHUB_PACKAGE_BRANCH,
     GITHUB_REPO,
-    GITHUB_CONNECTION_ARN
+    GITHUB_CONNECTION_ARN,
+    GITHUB_FRONTEND_REPO,
+    STATIC_ASSETS_BUCKET_PROD,
+    STATIC_ASSETS_BUCKET_DEV,
+    DOMAIN_NAME
 } from "../configuration/dependencies";
 import { PipelineAppStage } from "./app-stage";
 import { STAGES } from "../constants";
+import * as route53 from "aws-cdk-lib/aws-route53";
 
 export class PipelineStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -32,6 +44,35 @@ export class PipelineStack extends cdk.Stack {
             }
         );
 
+        // Add source steps for both repositories
+        const sourceStep = CodePipelineSource.connection(
+            `${GITHUB_OWNER}/${GITHUB_FRONTEND_REPO}`,
+            GITHUB_PACKAGE_BRANCH,
+            {
+                connectionArn: GITHUB_CONNECTION_ARN,
+                triggerOnPush: true // Enables automatic builds on push
+            }
+        );
+
+        // Create the IAM Role with Admin permissions
+        const adminRole = new Role(this, `${APPLICATION_NAME}PipelineRole`, {
+            assumedBy: new ServicePrincipal("codepipeline.amazonaws.com"),
+            managedPolicies: [ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess")]
+        });
+
+        const s3AccessPolicy = new PolicyStatement({
+            effect: Effect.ALLOW,
+            actions: ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+            resources: [
+                `arn:aws:s3:::${STATIC_ASSETS_BUCKET_DEV}/*`,
+                `arn:aws:s3:::${STATIC_ASSETS_BUCKET_DEV}`,
+                `arn:aws:s3:::${STATIC_ASSETS_BUCKET_PROD}/*`,
+                `arn:aws:s3:::${STATIC_ASSETS_BUCKET_PROD}`
+            ]
+        });
+
+        adminRole.addToPolicy(s3AccessPolicy);
+
         // Create the high-level CodePipeline
         const pipeline = new CodePipeline(this, `${APPLICATION_NAME}Pipeline`, {
             pipelineName: `${APPLICATION_NAME}Pipeline`,
@@ -39,25 +80,77 @@ export class PipelineStack extends cdk.Stack {
                 input: source,
                 commands: ["npm ci", "npm run build", "npx cdk synth"]
             }),
+            role: adminRole,
             codeBuildDefaults: {
                 rolePolicy: [
                     new PolicyStatement({
-                        actions: [
-                            "route53:ListHostedZonesByName",
-                            "route53:GetHostedZone",
-                            "route53:ListHostedZones"
-                        ],
+                        actions: ["*"],
                         resources: ["*"]
                     })
                 ]
             }
         });
 
-        STAGES.forEach(({ stageName, env, isProd }) => {
+        // Look up the existing hosted zone for your domain
+        const hostedZone = route53.HostedZone.fromLookup(this, `${APPLICATION_NAME}HostedZone`, {
+            domainName: DOMAIN_NAME // Your domain name
+        });
+
+        // Create the ACM certificate
+        const certificate = new cdk.aws_certificatemanager.Certificate(
+            this,
+            `${APPLICATION_NAME}Certificate`,
+            {
+                domainName: DOMAIN_NAME,
+                subjectAlternativeNames: [`*.${DOMAIN_NAME}`], // Wildcard for all subdomains
+                validation: cdk.aws_certificatemanager.CertificateValidation.fromDns(hostedZone)
+            }
+        );
+
+        // Export repository URI as output
+        new cdk.CfnOutput(this, `${APPLICATION_NAME}-certificate`, {
+            value: certificate.certificateArn,
+            exportName: `${APPLICATION_NAME}-certificate`
+        });
+
+        STAGES.forEach(({ stageName, env, staticAssetsBucketName, isProd }) => {
+            const domain = isProd ? DOMAIN_NAME : `${stageName}.${DOMAIN_NAME}`;
+            const apiDomain = isProd ? `api.${DOMAIN_NAME}` : `api.${stageName}.${DOMAIN_NAME}`;
+
+            const buildStep = new CodeBuildStep(`Build-FrontEnd-${stageName}`, {
+                input: sourceStep,
+                installCommands: ["npm install"],
+                // TODO: add "npm run test" when frontend ready
+                commands: ["npm run build"],
+                env: {
+                    REACT_APP_STAGE: stageName,
+                    CI: "true"
+                },
+                primaryOutputDirectory: "dist",
+                projectName: `BuildProject-${stageName}`
+            });
+
+            const deployStep = new ShellStep(`Deploy-FrontEnd-${stageName}`, {
+                input: buildStep,
+                commands: ["ls", `aws s3 sync . s3://${staticAssetsBucketName}`]
+            });
+
+            const invalidateCacheStep = new ShellStep(`InvalidateCache-${stageName}`, {
+                commands: [
+                    // Fetch CloudFront Distribution ID using AWS CLI
+                    `CLOUDFRONT_ID=$(aws cloudformation describe-stacks --stack-name ${stageName}-${APPLICATION_NAME}CloudFrontStack-${stageName} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)`,
+                    // Use the fetched CloudFront ID to create invalidation
+                    `aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*"`
+                ]
+            });
+
             const stage = new PipelineAppStage(this, `${stageName}-${APPLICATION_NAME}`, {
-                env,
                 stageName,
-                isProd
+                apiDomain,
+                domain,
+                isProd,
+                env: { region: env.region, account: env.account },
+                staticAssetsBucketName
             });
             if (isProd) {
                 pipeline.addStage(stage, {
@@ -65,11 +158,16 @@ export class PipelineStack extends cdk.Stack {
                         new ManualApprovalStep("ApproveIfStable", {
                             comment:
                                 "Approve to continue production deployment. Make sure every changes are verified in dev."
-                        })
-                    ]
+                        }),
+                        buildStep
+                    ],
+                    post: [deployStep, invalidateCacheStep]
                 });
             } else {
-                pipeline.addStage(stage);
+                pipeline.addStage(stage, {
+                    pre: [buildStep],
+                    post: [deployStep, invalidateCacheStep]
+                });
             }
         });
     }
