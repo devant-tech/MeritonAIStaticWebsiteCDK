@@ -10,7 +10,7 @@ import {
     CodeBuildStep,
     CodePipeline,
     CodePipelineSource,
-    ManualApprovalStep,
+    // ManualApprovalStep,
     ShellStep
 } from "aws-cdk-lib/pipelines";
 import { Construct } from "constructs";
@@ -153,16 +153,16 @@ export class PipelineStack extends cdk.Stack {
                 staticAssetsBucketName
             });
             if (isProd) {
-                pipeline.addStage(stage, {
-                    pre: [
-                        new ManualApprovalStep("ApproveIfStable", {
-                            comment:
-                                "Approve to continue production deployment. Make sure every changes are verified in dev."
-                        }),
-                        buildStep
-                    ],
-                    post: [deployStep, invalidateCacheStep]
-                });
+                // pipeline.addStage(stage, {
+                //     pre: [
+                //         new ManualApprovalStep("ApproveIfStable", {
+                //             comment:
+                //                 "Approve to continue production deployment. Make sure every changes are verified in dev."
+                //         }),
+                //         buildStep
+                //     ],
+                //     post: [deployStep, invalidateCacheStep]
+                // });
             } else {
                 pipeline.addStage(stage, {
                     pre: [buildStep],
