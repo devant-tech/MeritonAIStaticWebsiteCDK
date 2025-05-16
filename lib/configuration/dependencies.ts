@@ -13,6 +13,6 @@ export const DOMAIN_NAME = "meriton-ai.com";
 export const STATIC_ASSETS_BUCKET_DEV =
     "meriton-ai-customer-portal-beta-static-website-brthmaaeogh";
 export const STATIC_ASSETS_BUCKET_PROD =
-    "meriton-ai-customer-portal-gamma-static-website-brthmaaeogh";
+    "meriton-ai-customer-portal-prod-static-website-brthmaaeogh";
 
 export const AWS_ACCOUNT = "086026665560";
