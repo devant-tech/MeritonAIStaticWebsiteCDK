@@ -1,7 +1,7 @@
 // GitHub
 export const GITHUB_CONNECTION_ARN =
-    "arn:aws:codeconnections:us-east-1:086026665560:connection/75ba992d-a6cd-424c-a0a9-9d9df4bfabc6";
-export const GITHUB_OWNER = "LIYUNG";
+    "arn:aws:codeconnections:us-east-1:086026665560:connection/df16e6db-671c-4a1d-8eed-e1973d3515a1";
+export const GITHUB_OWNER = "devant-tech";
 export const GITHUB_PACKAGE_BRANCH = "main";
 
 export const GITHUB_REPO = "MeritonAIStaticWebsiteCDK";
