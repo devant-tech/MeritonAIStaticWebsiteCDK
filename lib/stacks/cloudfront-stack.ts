@@ -55,6 +55,44 @@ export class CloudFrontStack extends cdk.Stack {
             }
         );
 
+        const apiGatewayOrigin = new origins.HttpOrigin(props.apiDomain, {
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY
+        });
+
+        const originRequestPolicy = new cloudfront.OriginRequestPolicy(
+            this,
+            "MeritonAICustomerPortalOriginRequestPolicy",
+            {
+                originRequestPolicyName: `meriton-ai-customer-portal-origin-request-policy-${props.stageName}`,
+                headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
+                    "Accept",
+                    "x-forwarded-user",
+                    "x-forwarded-payload",
+                    "x-client-verify",
+                    "X-auth",
+                    "meriton-ai-organization" // Only if needed
+                ),
+                queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(), // Forward all query strings
+                cookieBehavior: cloudfront.OriginRequestCookieBehavior.all() // Forward all cookies
+            }
+        );
+
+        const apiResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(
+            this,
+            "MeritonAIApiResponseHeadersPolicy",
+            {
+                responseHeadersPolicyName: `meriton-ai-api-response-headers-${props.stageName}`,
+                corsBehavior: {
+                    accessControlAllowCredentials: true,
+                    accessControlAllowOrigins: ["http://localhost:5001"], // ✅ Explicitly allow frontend
+                    accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                    accessControlAllowHeaders: ["Authorization", "Content-Type", "X-auth"],
+                    accessControlExposeHeaders: ["Authorization"], // If API returns auth headers
+                    originOverride: true // Ensures this header is always set
+                }
+            }
+        );
+
         const oac = new cloudfront.S3OriginAccessControl(this, `OAC-${stageName}`, {
             signing: cloudfront.Signing.SIGV4_NO_OVERRIDE
         });
@@ -96,6 +134,19 @@ export class CloudFrontStack extends cdk.Stack {
                         }
                     ],
                     compress: true
+                },
+                additionalBehaviors: {
+                    "/api/*": {
+                        origin: apiGatewayOrigin,
+                        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+                        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+                        originRequestPolicy,
+                        ...(!props.isProd && {
+                            responseHeadersPolicy: apiResponseHeadersPolicy
+                        }),
+                        compress: true
+                    }
                 },
                 domainNames: [props.domain],
                 certificate: certificate,
