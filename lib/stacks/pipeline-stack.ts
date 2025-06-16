@@ -115,7 +115,7 @@ export class PipelineStack extends cdk.Stack {
 
         STAGES.forEach(({ stageName, env, staticAssetsBucketName, isProd }) => {
             const domain = isProd ? DOMAIN_NAME : `${stageName}.${DOMAIN_NAME}`;
-            const apiDomain = isProd ? `api.${DOMAIN_NAME}` : `api.${stageName}.${DOMAIN_NAME}`;
+            const apiDomain = `api.ecs.${stageName}.${DOMAIN_NAME}`;
 
             const buildStep = new CodeBuildStep(`Build-FrontEnd-${stageName}`, {
                 input: sourceStep,
