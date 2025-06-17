@@ -135,6 +135,7 @@ export class PipelineStack extends cdk.Stack {
                     REACT_APP_STAGE: stageName,
                     VITE_GOOGLE_OAUTH_CLIENT_ID: secrets.values["GOOGLE_OAUTH_CLIENT_ID"],
                     VITE_GOOGLE_OAUTH_REDIRECT_URL: secrets.values["GOOGLE_OAUTH_REDIRECT_URL"],
+                    VITE_APP_BASE_URL: `https://${domain}`,
                     CI: "true"
                 },
                 primaryOutputDirectory: "dist",
