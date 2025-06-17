@@ -29,6 +29,7 @@ import {
 import { PipelineAppStage } from "./app-stage";
 import { STAGES } from "../constants";
 import * as route53 from "aws-cdk-lib/aws-route53";
+import { SsmParameters } from "../constructs";
 
 export class PipelineStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -113,73 +114,72 @@ export class PipelineStack extends cdk.Stack {
             exportName: `${APPLICATION_NAME}-certificate`
         });
 
-        STAGES.forEach(
-            ({
-                stageName,
-                env,
-                staticAssetsBucketName,
-                googleClientId,
-                googleRedirectUrl,
-                isProd
-            }) => {
-                const domain = isProd ? DOMAIN_NAME : `${stageName}.${DOMAIN_NAME}`;
-                const apiDomain = `api.ecs.${stageName}.${DOMAIN_NAME}`;
+        STAGES.forEach(({ stageName, env, staticAssetsBucketName, isProd }) => {
+            const domain = isProd ? DOMAIN_NAME : `${stageName}.${DOMAIN_NAME}`;
+            const apiDomain = `api.ecs.${stageName}.${DOMAIN_NAME}`;
 
-                const buildStep = new CodeBuildStep(`Build-FrontEnd-${stageName}`, {
-                    input: sourceStep,
-                    installCommands: ["npm install"],
-                    // TODO: add "npm run test" when frontend ready
-                    commands: ["npm run build"],
-                    env: {
-                        REACT_APP_STAGE: stageName,
-                        VITE_GOOGLE_OAUTH_CLIENT_ID: googleClientId,
-                        VITE_GOOGLE_OAUTH_REDIRECT_URL: googleRedirectUrl,
-                        CI: "true"
-                    },
-                    primaryOutputDirectory: "dist",
-                    projectName: `BuildProject-${stageName}`
-                });
-
-                const deployStep = new ShellStep(`Deploy-FrontEnd-${stageName}`, {
-                    input: buildStep,
-                    commands: ["ls", `aws s3 sync . s3://${staticAssetsBucketName}`]
-                });
-
-                const invalidateCacheStep = new ShellStep(`InvalidateCache-${stageName}`, {
-                    commands: [
-                        // Fetch CloudFront Distribution ID using AWS CLI
-                        `CLOUDFRONT_ID=$(aws cloudformation describe-stacks --stack-name ${stageName}-${APPLICATION_NAME}CloudFrontStack-${stageName} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)`,
-                        // Use the fetched CloudFront ID to create invalidation
-                        `aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*"`
-                    ]
-                });
-
-                const stage = new PipelineAppStage(this, `${stageName}-${APPLICATION_NAME}`, {
-                    stageName,
-                    apiDomain,
-                    domain,
-                    isProd,
-                    env: { region: env.region, account: env.account },
-                    staticAssetsBucketName
-                });
-                if (isProd) {
-                    pipeline.addStage(stage, {
-                        pre: [
-                            new ManualApprovalStep("ApproveIfStable", {
-                                comment:
-                                    "Approve to continue production deployment. Make sure every changes are verified in dev."
-                            }),
-                            buildStep
-                        ],
-                        post: [deployStep, invalidateCacheStep]
-                    });
-                } else {
-                    pipeline.addStage(stage, {
-                        pre: [buildStep],
-                        post: [deployStep, invalidateCacheStep]
-                    });
+            const keyPrefix = `/meritonai/backend/config/${stageName}`;
+            const secrets = new SsmParameters(this, `Secrets-ecs-${stageName}`, {
+                parameterNames: {
+                    GOOGLE_OAUTH_CLIENT_ID: `${keyPrefix}/google-oauth-client-id`,
+                    GOOGLE_OAUTH_REDIRECT_URL: `${keyPrefix}/google-oauth-redirect-url`
                 }
+            });
+
+            const buildStep = new CodeBuildStep(`Build-FrontEnd-${stageName}`, {
+                input: sourceStep,
+                installCommands: ["npm install"],
+                // TODO: add "npm run test" when frontend ready
+                commands: ["npm run build"],
+                env: {
+                    REACT_APP_STAGE: stageName,
+                    VITE_GOOGLE_OAUTH_CLIENT_ID: secrets.values["GOOGLE_OAUTH_CLIENT_ID"],
+                    VITE_GOOGLE_OAUTH_REDIRECT_URL: secrets.values["GOOGLE_OAUTH_REDIRECT_URL"],
+                    CI: "true"
+                },
+                primaryOutputDirectory: "dist",
+                projectName: `BuildProject-${stageName}`
+            });
+
+            const deployStep = new ShellStep(`Deploy-FrontEnd-${stageName}`, {
+                input: buildStep,
+                commands: ["ls", `aws s3 sync . s3://${staticAssetsBucketName}`]
+            });
+
+            const invalidateCacheStep = new ShellStep(`InvalidateCache-${stageName}`, {
+                commands: [
+                    // Fetch CloudFront Distribution ID using AWS CLI
+                    `CLOUDFRONT_ID=$(aws cloudformation describe-stacks --stack-name ${stageName}-${APPLICATION_NAME}CloudFrontStack-${stageName} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)`,
+                    // Use the fetched CloudFront ID to create invalidation
+                    `aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*"`
+                ]
+            });
+
+            const stage = new PipelineAppStage(this, `${stageName}-${APPLICATION_NAME}`, {
+                stageName,
+                apiDomain,
+                domain,
+                isProd,
+                env: { region: env.region, account: env.account },
+                staticAssetsBucketName
+            });
+            if (isProd) {
+                pipeline.addStage(stage, {
+                    pre: [
+                        new ManualApprovalStep("ApproveIfStable", {
+                            comment:
+                                "Approve to continue production deployment. Make sure every changes are verified in dev."
+                        }),
+                        buildStep
+                    ],
+                    post: [deployStep, invalidateCacheStep]
+                });
+            } else {
+                pipeline.addStage(stage, {
+                    pre: [buildStep],
+                    post: [deployStep, invalidateCacheStep]
+                });
             }
-        );
+        });
     }
 }
